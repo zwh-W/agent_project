@@ -1,0 +1,58 @@
+app:
+  host: "0.0.0.0"
+  port: 8000
+  debug: true
+
+# LLM 配置：base_url 和 model 写这里，API Key 从环境变量读
+llm:
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  model: "qwen-plus"
+  temperature: 0.1
+  max_tokens: 4096
+  streaming: true
+
+# Agent 核心参数：每个参数都要知道为什么这么设
+agent:
+  # ReAct / Function Calling 最大循环次数
+  # 防止 Agent 陷入无限循环，超过后强制停止
+  max_iterations: 6
+
+  # Multi-Agent Supervisor 最大调度轮数
+  max_supervisor_rounds: 5
+
+  # 单次工具调用超时时间（秒）
+  tool_timeout: 30
+
+  # 是否启用工具调用失败重试
+  tool_retry: true
+  tool_retry_times: 2
+
+# 记忆系统配置
+memory:
+  # 短期记忆：单次对话最多保留多少条消息
+  # 太多会超 context window，太少 Agent 忘事
+  short_term_max_messages: 20
+
+  # 长期记忆：向量数据库存储路径
+  chroma_path: "chroma_db"
+
+  # 长期记忆检索：每次召回多少条相关历史
+  long_term_top_k: 3
+
+# 工具配置
+tools:
+  # 网络搜索每次返回几条结果
+  search_max_results: 3
+
+  # RAG 工具对接的知识库 API
+  rag_api_url: "http://localhost:6006"
+  rag_knowledge_id: 1
+
+# MCP 服务器配置
+mcp:
+  server_script: "mcp_servers/tools_server.py"
+  transport: "stdio"
+
+logging:
+  level: "INFO"
+  file: "logs/agent.log"

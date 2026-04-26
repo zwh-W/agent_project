@@ -1,0 +1,26 @@
+# 敏感信息
+.env
+
+# Python缓存
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 向量数据库数据（体积大）
+chroma_db/
+*.index
+
+# 日志
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 模型权重
+*.bin
+*.safetensors
+models/
