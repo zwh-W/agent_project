@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from app.api.schemas import ChatRequest, ChatResponse
 from app.agents.function_calling_agent import FunctionCallingAgent
 from app.core.logger import get_logger
-
+from app.agents.langgraph_agent import LangGraphAgent
 logger = get_logger(__name__)
 router = APIRouter()
 
@@ -20,6 +20,9 @@ async def chat_endpoint(req: ChatRequest):
     # 根据 agent_type 决定调用哪个 Agent
     if agent_type_str == "function_calling":
         agent = FunctionCallingAgent(session_id=req.session_id)
+        answer = agent.chat(req.message)
+    elif agent_type_str == "langgraph":
+        agent = LangGraphAgent(session_id=req.session_id)
         answer = agent.chat(req.message)
     else:
         # 默认兜底

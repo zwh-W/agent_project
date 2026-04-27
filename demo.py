@@ -1,17 +1,22 @@
-# test_agent.py
-from app.agents.function_calling_agent import FunctionCallingAgent
+import sys
+import os
 
+# 确保能导入 app 模块
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-def main():
-    print("================ 启动企业级 Agent 测试 ================")
-    session_id = "test_user_001"
-    agent = FunctionCallingAgent(session_id=session_id)
+# 1. 导入 Agent
+from app.agents.langgraph_agent import LangGraphAgent
 
-    # 考验记忆和计算工具
-    print("\n--- 测试开始 ---")
-    ans = agent.chat("我叫架构师。帮我算一下 2的10次方减去50是多少？然后用鸭子侦探的语气告诉我结果。")
-    print(f"\n最终回复:\n{ans}")
+# 2. 初始化 (随便起个 ID)
+print("正在初始化...")
+agent = LangGraphAgent(session_id="debug_001")
 
+# 3. 发消息测试
+print("\n发送消息中...")
+user_input = "你好"
+response = agent.chat(user_input)
 
-if __name__ == "__main__":
-    main()
+# 4. 打印结果
+print(f"\n[用户]: {user_input}")
+print(f"[Agent]: {response}")
+print("\nDebug 结束。")
