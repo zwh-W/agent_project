@@ -23,10 +23,10 @@ class BaseResponse(BaseModel):
 # ── Agent 类型枚举 ─────────────────────────────────────────
 class AgentType(str, Enum):
     function_calling = "function_calling"  # 手写 Function Calling（最基础）
-    react = "react"  # ReAct 推理链
-    langgraph = "langgraph"  # LangGraph 单 Agent
-    multi_agent = "multi_agent"  # Multi-Agent Supervisor 模式
-    mcp = "mcp"  # MCP 协议 Agent
+    react = "react"                        # ReAct 推理链
+    langgraph = "langgraph"                # LangGraph 单 Agent
+    multi_agent = "multi_agent"            # Multi-Agent Supervisor 模式
+    mcp = "mcp"                            # MCP 协议 Agent
 
 
 # ── 对话消息 ───────────────────────────────────────────────
@@ -52,14 +52,28 @@ class ToolCall(BaseModel):
 # ── 请求 ───────────────────────────────────────────────────
 class ChatRequest(BaseModel):
     message: str = Field(description="用户输入")
-    session_id: Optional[str] = Field(default=None, description="会话ID，多轮对话时传入")
-    agent_type: AgentType = Field(default=AgentType.react, description="使用哪种 Agent")
+    # ★ [修改] session_id 改为自动生成，不再让 None 传入 Agent
+    # 原因：原来 session_id=None 时，所有用户共享同一个 key=None 的会话，
+    # 导致记忆严重串台。现在在 validator 里保证一定有值。
+    session_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description="会话ID，不传则自动生成"
+    )
+    agent_type: AgentType = Field(default=AgentType.function_calling, description="使用哪种 Agent")
 
     @field_validator("message")
     @classmethod
     def message_not_empty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("消息不能为空")
+        return v.strip()
+
+    # ★ [新增] session_id 校验器，防止空字符串被传入
+    @field_validator("session_id")
+    @classmethod
+    def session_id_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            return str(uuid.uuid4())
         return v.strip()
 
 

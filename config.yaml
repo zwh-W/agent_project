@@ -33,8 +33,10 @@ memory:
   # 太多会超 context window，太少 Agent 忘事
   short_term_max_messages: 20
 
-  # 长期记忆：向量数据库存储路径
-  chroma_path: "chroma_db"
+
+  es_host: "http://localhost:9200"
+  # BGE 向量模型路径（可以是本地路径或 HuggingFace model id）
+  bge_model_path: "D:/ai_models/bge-small-zh-v1.5"
 
   # 长期记忆检索：每次召回多少条相关历史
   long_term_top_k: 3
