@@ -5,6 +5,7 @@ from app.api.schemas import ChatRequest, ChatResponse
 from app.agents.function_calling_agent import FunctionCallingAgent
 from app.core.logger import get_logger
 from app.agents.langgraph_agent import LangGraphAgent
+from app.agents.multi_agent import MultiAgentSupervisor
 logger = get_logger(__name__)
 router = APIRouter()
 
@@ -23,6 +24,9 @@ async def chat_endpoint(req: ChatRequest):
         answer = agent.chat(req.message)
     elif agent_type_str == "langgraph":
         agent = LangGraphAgent(session_id=req.session_id)
+        answer = agent.chat(req.message)
+    elif agent_type_str == "multi_agent":
+        agent = MultiAgentSupervisor(session_id=req.session_id)
         answer = agent.chat(req.message)
     else:
         # 默认兜底
