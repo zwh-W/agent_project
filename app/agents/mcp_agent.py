@@ -28,7 +28,7 @@ class MCPAgent:
         logger.info(f"[{self.session_id}] 用户输入 (MCP): {user_input}")
         self.memory.add_user_message(user_input)
 
-        initial_state = {"messages": self.memory.get_context()}
+        initial_state = {"messages": self.memory.get_context(current_user_input=user_input)}
         final_answer = ""
 
         logger.info(f"[{self.session_id}] 🔌 正在连接 MCP 服务器...")

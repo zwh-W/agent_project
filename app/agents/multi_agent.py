@@ -122,7 +122,7 @@ class MultiAgentSupervisor:
 
     def chat(self, user_input: str) -> str:
         self.memory.add_user_message(user_input)
-        initial_state = {"messages": self.memory.get_context()}
+        initial_state = {"messages": self.memory.get_context(current_user_input=user_input)}
 
         final_answer = ""
         # 限制 recursion_limit 防止大模型抽风死循环

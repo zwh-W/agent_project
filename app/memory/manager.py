@@ -6,6 +6,7 @@ from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AI
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.llm_client import get_langchain_llm  # 引入大模型用来做总结
+from app.memory.long_term import es_memory_db  # ✨ 新增导入 ES 模块
 
 logger = get_logger(__name__)
 
@@ -37,18 +38,22 @@ class SessionMemory:
         self.messages.append(message)
         self._compress_if_needed()
 
-    def get_context(self) -> List[BaseMessage]:
-        """获取当前供大模型读取的完整上下文（动态注入摘要）"""
+    def get_context(self, current_user_input: str = "") -> List[BaseMessage]:
+        """获取上下文，并【自动唤醒长期记忆】"""
         context = []
-
-        # 动态组装系统人设：基础设定 + 历史摘要
         full_system_prompt = self.base_system_prompt
+
+        # 1. 注入短期摘要
         if self.summary:
-            full_system_prompt += f"\n\n【用户历史背景档案】:\n{self.summary}"
+            full_system_prompt += f"\n\n【近期背景摘要】:\n{self.summary}"
+
+        # 2. ✨ 核心动作：用当前用户的提问，去 ES 检索前世今生的记忆！
+        if current_user_input:
+            long_term_facts = es_memory_db.recall_memory(self.session_id, current_user_input)
+            if long_term_facts:
+                full_system_prompt += f"\n\n【从长期记忆(ES)中唤醒的相关事实】:\n{long_term_facts}"
 
         context.append(SystemMessage(content=full_system_prompt))
-
-        # 加上最近的活跃对话
         context.extend(self.messages)
         return context
 
@@ -57,15 +62,10 @@ class SessionMemory:
         if len(self.messages) <= self.max_messages:
             return
 
-        logger.info(f"[{self.session_id}] ⚠️ 记忆达到阈值({self.max_messages})，启动记忆压缩引擎...")
-
-        # 抽出需要被压缩的老旧消息（留下最新的 4 条作为上下文连贯缓冲）
+        logger.info(f"[{self.session_id}] ⚠️ 记忆达到阈值，启动记忆压缩引擎...")
         keep_recent = 4
         messages_to_compress = self.messages[:-keep_recent]
-
-        # 把老消息转成文本
         old_dialogue = "\n".join([f"{m.type}: {m.content}" for m in messages_to_compress])
-
         # 让大模型干活的 Prompt
         compression_prompt = f"""
         你是一个记忆整理专家。请根据【旧的背景档案】和【最近的对话记录】，写出一份最新的、包含所有关键信息的【新背景档案】。
@@ -78,20 +78,16 @@ class SessionMemory:
         """
 
         try:
-            # 召唤 LLM 生成新摘要
             llm = get_langchain_llm()
-            # 注意：这里的思考是在后台默默进行的，不影响主对话历史
             response = llm.invoke([HumanMessage(content=compression_prompt)])
-
             self.summary = response.content.strip()
-            logger.info(f"[{self.session_id}] ✅ 压缩完成。新背景档案: {self.summary[:50]}...")
 
-            # 截断原始消息列表，只保留最近的那几条
+            # ✨ 核心动作：将生成的摘要当做核心事实，永久固化到 ES 中！
+            es_memory_db.save_memory(self.session_id, self.summary)
+
             self.messages = self.messages[-keep_recent:]
-
         except Exception as e:
             logger.error(f"[{self.session_id}] ❌ 记忆压缩失败: {e}")
-            # 如果压缩失败，为了防止彻底爆掉，退化为暴力截断
             self.messages = self.messages[-keep_recent:]
 
 

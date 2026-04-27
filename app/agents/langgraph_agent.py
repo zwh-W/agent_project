@@ -74,7 +74,7 @@ class LangGraphAgent:
         self.memory.add_user_message(user_input)
 
         # 2. 拿到当前的完整上下文，作为流程图的初始状态
-        initial_state = {"messages": self.memory.get_context()}
+        initial_state = {"messages": self.memory.get_context(current_user_input=user_input)}
 
         # 3. 启动流程图机器！(stream 可以让我们看到流转过程)
         final_answer = ""

@@ -41,7 +41,7 @@ class FunctionCallingAgent:
 
         for attempt in range(max_iterations):
             # 获取当前上下文（包含自动注入的 System Prompt 和 Summary 摘要）
-            messages = self.memory.get_context()
+            messages = self.memory.get_context(current_user_input=user_input)
 
             # 2. 召唤大模型进行思考
             logger.debug(f"[{self.session_id}] 🧠 正在思考 (第 {attempt + 1}/{max_iterations} 轮)...")
