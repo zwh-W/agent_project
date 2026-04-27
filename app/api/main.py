@@ -13,6 +13,8 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.logger import get_logger
+# ── 注册路由 ──────────────
+from app.api.routers import agent_router
 
 logger = get_logger(__name__)
 
@@ -28,7 +30,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+app.include_router(agent_router.router, prefix="/v1", tags=["Agent 对话"])
 
 # ── 全局异常处理（和 RAG 项目保持一致）────────────────────
 @app.exception_handler(Exception)
