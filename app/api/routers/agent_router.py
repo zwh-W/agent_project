@@ -6,6 +6,7 @@ from app.agents.function_calling_agent import FunctionCallingAgent
 from app.core.logger import get_logger
 from app.agents.langgraph_agent import LangGraphAgent
 from app.agents.multi_agent import MultiAgentSupervisor
+from app.agents.mcp_agent import MCPAgent
 logger = get_logger(__name__)
 router = APIRouter()
 
@@ -21,15 +22,17 @@ async def chat_endpoint(req: ChatRequest):
     # 根据 agent_type 决定调用哪个 Agent
     if agent_type_str == "function_calling":
         agent = FunctionCallingAgent(session_id=req.session_id)
-        answer = agent.chat(req.message)
+        answer = agent.chat(req.message)  # 之前的都是同步
     elif agent_type_str == "langgraph":
         agent = LangGraphAgent(session_id=req.session_id)
         answer = agent.chat(req.message)
     elif agent_type_str == "multi_agent":
         agent = MultiAgentSupervisor(session_id=req.session_id)
         answer = agent.chat(req.message)
+    elif agent_type_str == "mcp":
+        agent = MCPAgent(session_id=req.session_id)
+        answer = await agent.chat(req.message)  # ✨ 只有 MCP 需要 await 异步调用
     else:
-        # 默认兜底
         agent = FunctionCallingAgent(session_id=req.session_id)
         answer = agent.chat(req.message)
 
