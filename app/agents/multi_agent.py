@@ -1,6 +1,19 @@
 # app/agents/multi_agent.py
+"""
+企业级 Multi-Agent 架构 (主管-员工模式)
+
+★ [修改1] supervisor_node 的返回值和路由解耦
+原因：原代码 supervisor_node 返回 {"next_worker": next_step}，
+但 AgentState 没有 next_worker 字段（已在 state.py 修复），
+且原代码中 supervisor_node 节点根本没被 add_node 进去，
+路由完全靠 route_by_supervisor 函数，但这个函数重复调用了一次 LLM，
+意味着每次路由都会额外多消耗一次 LLM 调用（2倍成本，2倍延迟）。
+
+★ [修改2] 将双重 LLM 路由调用合并为单次
+★ [修改3] Supervisor Prompt 加 few-shot 示例，减少模型输出无关内容
+"""
 from typing import Literal
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
 
 from app.core.logger import get_logger
@@ -13,6 +26,27 @@ from app.tools.calculator import calculator
 logger = get_logger(__name__)
 
 
+# ★ [新增] Supervisor Prompt 抽离为模块级常量，方便版本管理和测试
+# 加入 few-shot 示例，强制约束输出格式，降低大模型乱输出的概率
+SUPERVISOR_SYSTEM_PROMPT = """你是一个团队主管，管理两个员工：
+- Researcher：负责联网搜索事实、新闻、实时数据
+- Calculator：负责数学计算、公式求值
+
+根据对话历史，决定下一步派给谁。任务彻底完成或不需要员工帮忙时回复 FINISH。
+
+【输出规则】只能输出以下三个词之一，不加任何标点或解释：
+Researcher
+Calculator
+FINISH
+
+【示例】
+用户问: "今天比特币价格是多少" → Researcher
+用户问: "123 乘以 456 等于多少" → Calculator
+用户问: "先查一下苹果股价，再算出它比100美元高多少" → Researcher（先搜索）
+研究员已汇报苹果股价为182美元 → Calculator（再计算）
+计算结果已给出，任务完成 → FINISH"""
+
+
 class MultiAgentSupervisor:
     """
     企业级 Multi-Agent 架构 (主管-员工模式)
@@ -21,102 +55,73 @@ class MultiAgentSupervisor:
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.memory = memory_manager.get_session(session_id)
-
-        # 准备大脑
         self.llm = get_langchain_llm()
-
-        # 编译流程图
         self.app = self._build_graph()
 
+    def _route_by_supervisor(self, state: AgentState) -> Literal["Researcher", "Calculator", "__end__"]:
+        """
+        ★ [修改] 将路由逻辑从两个函数（supervisor_node + route_by_supervisor）合并为一个
+        原因：原代码 supervisor_node 返回 next_worker 到状态字典，
+        但路由 edge 函数 route_by_supervisor 又单独再调用一次 LLM 做决策，
+        导致每次路由 = 2 次 LLM 调用，既浪费钱又增加延迟。
+        现在合并为一次调用，将 LLM 的决策直接用于路由。
+        """
+        logger.info(f"[{self.session_id}] 👔 主管正在审视全局进展并做路由决策...")
+
+        messages = [SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT)] + state["messages"]
+        decision = self.llm.invoke(messages).content.strip()
+
+        logger.info(f"[{self.session_id}] 👔 主管原始输出: '{decision}'")
+
+        # 容错：大模型可能在词里加空格或换行
+        decision_clean = decision.strip().lower()
+        if "researcher" in decision_clean:
+            next_step = "Researcher"
+        elif "calculator" in decision_clean:
+            next_step = "Calculator"
+        else:
+            next_step = "__end__"
+
+        logger.info(f"[{self.session_id}] 👔 主管决定: {next_step}")
+        return next_step
+
     def _build_graph(self):
-        # ==========================================
-        # 1. 定义员工：研究员 (Researcher)
-        # ==========================================
+        # ──────────────────────────────────────────────
+        # 员工节点定义
+        # ──────────────────────────────────────────────
         researcher_llm = self.llm.bind_tools([web_search])
 
         def researcher_node(state: AgentState):
             logger.debug(f"[{self.session_id}] 🔍 员工[研究员] 开始工作...")
-            # 注入角色人设
-            messages = [SystemMessage(content="你是权威的研究员，遇到事实问题必须使用搜索引擎。")] + state["messages"]
+            messages = [SystemMessage(content="你是权威的研究员，遇到事实问题必须使用搜索引擎，不能凭记忆回答。")] + state["messages"]
             response = researcher_llm.invoke(messages)
-            # 在返回消息前加上特定的前缀，方便我们在日志里区分是谁说的
             if response.content:
                 response.content = f"【研究员汇报】: {response.content}"
             return {"messages": [response]}
 
-        # ==========================================
-        # 2. 定义员工：精算师 (Calculator)
-        # ==========================================
         calculator_llm = self.llm.bind_tools([calculator])
 
         def calculator_node(state: AgentState):
             logger.debug(f"[{self.session_id}] 🧮 员工[精算师] 开始工作...")
-            messages = [SystemMessage(content="你是精算师，必须使用计算工具解决数学问题。")] + state["messages"]
+            messages = [SystemMessage(content="你是精算师，必须使用计算工具解决数学问题，不能心算。")] + state["messages"]
             response = calculator_llm.invoke(messages)
             if response.content:
                 response.content = f"【精算师汇报】: {response.content}"
             return {"messages": [response]}
 
-        # ==========================================
-        # 3. 定义老板：主管 (Supervisor)
-        # ==========================================
-        def supervisor_node(state: AgentState) -> dict:
-            """
-            主管不执行工具，只负责输出下一步要派给谁干活
-            """
-            logger.info(f"[{self.session_id}] 👔 老板[主管] 正在审视全局进展...")
-
-            supervisor_prompt = (
-                "你是一个团队主管，管理着两个员工：'Researcher'(负责联网查资料) 和 'Calculator'(负责数学计算)。\n"
-                "请根据以下的对话历史，决定接下来需要谁来处理。\n"
-                "如果任务已经彻底解决，或者不需要员工帮忙了，请回复 'FINISH'。\n"
-                "你只能回复这三个词之一：'Researcher', 'Calculator', 'FINISH'，绝对不要输出任何标点符号或其他文字！"
-            )
-
-            messages = [SystemMessage(content=supervisor_prompt)] + state["messages"]
-            decision = self.llm.invoke(messages).content.strip()
-
-            # 容错处理
-            if "Researcher" in decision:
-                next_step = "Researcher"
-            elif "Calculator" in decision:
-                next_step = "Calculator"
-            else:
-                next_step = "FINISH"
-
-            logger.info(f"[{self.session_id}] 👔 主管决定下一步派给: {next_step}")
-            # 注意：主管节点不往 messages 里加消息，它只返回一个用于路由的信号（我们需要在状态字典中临时存一下）
-            # 为了不破坏 AgentState 的结构，我们利用 LangGraph 的 node 返回特性，直接在路由函数里处理
-            return {"next_worker": next_step}  # 这里只是为了日志打印方便，真正的路由在 edge 里
-
-        # 定义一个特殊的路由函数（Edge Function）
-        def route_by_supervisor(state: AgentState) -> Literal["Researcher", "Calculator", "__end__"]:
-            # 重新召唤大模型做一次快速的路由判断
-            supervisor_prompt = (
-                "你管理 'Researcher' 和 'Calculator'。根据对话记录，输出下一步交给谁。完成则输出 'FINISH'。只能输出这三个词之一。"
-            )
-            messages = [SystemMessage(content=supervisor_prompt)] + state["messages"]
-            decision = self.llm.invoke(messages).content.strip()
-            if "Researcher" in decision: return "Researcher"
-            if "Calculator" in decision: return "Calculator"
-            return "__end__"
-
-        # ==========================================
-        # 4. 组装多智能体流程图
-        # ==========================================
+        # ──────────────────────────────────────────────
+        # 组装流程图
+        # ──────────────────────────────────────────────
         workflow = StateGraph(AgentState)
 
-        # 添加节点
         workflow.add_node("Researcher", researcher_node)
         workflow.add_node("Calculator", calculator_node)
-        # 我们把路由逻辑直接做在 conditional_edges 里，省略单纯的 supervisor 节点以防死循环
 
-        # 强制起点是主管进行路由判断
-        workflow.add_conditional_edges(START, route_by_supervisor)
-
-        # 员工干完活之后，必须乖乖把结果交回给主管重新评估
-        workflow.add_conditional_edges("Researcher", route_by_supervisor)
-        workflow.add_conditional_edges("Calculator", route_by_supervisor)
+        # ★ [修改] 路由函数改为 self._route_by_supervisor（实例方法），
+        # 同一个 session 的上下文（self.session_id）可以被路由函数访问，方便日志追踪
+        workflow.add_conditional_edges(START, self._route_by_supervisor)
+        workflow.add_conditional_edges("Researcher", self._route_by_supervisor)
+        workflow.add_conditional_edges("Calculator", self._route_by_supervisor)
 
         return workflow.compile()
 
@@ -125,12 +130,10 @@ class MultiAgentSupervisor:
         initial_state = {"messages": self.memory.get_context(current_user_input=user_input)}
 
         final_answer = ""
-        # 限制 recursion_limit 防止大模型抽风死循环
         for event in self.app.stream(initial_state, {"recursion_limit": 15}):
             for node_name, state_update in event.items():
                 if "messages" in state_update and state_update["messages"]:
                     latest_msg = state_update["messages"][-1]
-                    # 我们过滤掉工具调用的中间日志，只拿自然语言回复
                     if latest_msg.content:
                         final_answer += latest_msg.content + "\n"
 
