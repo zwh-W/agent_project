@@ -1,62 +1,66 @@
-import time
-from app.memory.long_term import es_memory_db
-from app.core.logger import get_logger
-
-logger = get_logger(__name__)
+import re
+from enum import Enum
 
 
-def test_elasticsearch_memory():
-    print("================ 启动 ES 向量记忆测试 ================")
-
-    # 定义测试用的 session_id，方便最后统一清理
-    test_session_ids = ["test_user_es_001", "other_user_002"]
-    session_id = test_session_ids[0]
-
-    try:
-        # 1. 存入记忆
-        print("\n[1] 正在向 ES 注入记忆...")
-        es_memory_db.save_memory(session_id, "用户的老家在东北，平时无肉不欢，特别喜欢吃锅包肉。")
-        es_memory_db.save_memory(session_id, "用户对海鲜严重过敏，千万不能碰虾蟹。")
-        es_memory_db.save_memory(session_id, "用户家里养了一只叫'布丁'的橘猫。")
-        es_memory_db.save_memory(test_session_ids[1], "用户是个素食主义者。")
-
-        time.sleep(1)
-        print("✅ 记忆注入完成！")
-
-        # 2. 唤醒记忆测试
-        print("\n[2] 开始进行【语义级别】的记忆唤醒测试...")
-
-        query_a = "今晚去吃麻辣小龙虾怎么样？"
-        print(f"\n❓ 提问 A: {query_a}")
-        result_a = es_memory_db.recall_memory(session_id, query_a, top_k=1)
-        print(f"🧠 ES 唤醒结果: {result_a}")
-
-        query_b = "我要去买点宠物粮，买什么好？"
-        print(f"\n❓ 提问 B: {query_b}")
-        result_b = es_memory_db.recall_memory(session_id, query_b, top_k=1)
-        print(f"🧠 ES 唤醒结果: {result_b}")
-
-        query_c = "我爱吃什么？"
-        print(f"\n❓ 提问 C: {query_c}")
-        result_c = es_memory_db.recall_memory(session_id, query_c, top_k=2)
-        print(f"🧠 ES 唤醒结果:\n{result_c}")
-
-    finally:
-        # ==========================================
-        # 【关键】无论测试成功与否，最后强制清理数据
-        # ==========================================
-        print("\n[清理] 正在删除测试数据...")
-        for sid in test_session_ids:
-            # 假设你的 es_memory_db 有 delete_by_session 方法
-            # 如果没有，可以用 ES 的 delete_by_query 直接删
-            try:
-                # 这里需要你根据实际的 es_memory_db 接口来写
-                # 示例：es_memory_db.delete_session(sid)
-                print(f"   已清理 session: {sid}")
-            except Exception as e:
-                print(f"   清理 {sid} 失败: {e}")
-        print("✅ 测试现场清理完毕！")
+# 1. 定义 Agent 类型（模拟）
+class AgentType(Enum):
+    mcp = "MCP 企业工具Agent"
+    multi_agent = "Multi-Agent 多智能体"
+    function_calling = "函数调用Agent"
+    auto = "自动LLM路由"
 
 
+# 2. 你的规则路由表（原样复制）
+_RULE_ROUTING_TABLE = [
+    # MCP 相关：明确要调企业内网工具
+    (
+        re.compile(r"(员工信息|工号|内网|服务器时间|企业系统)", re.IGNORECASE),
+        AgentType.mcp,
+        "命中企业内网工具关键词"
+    ),
+    # 复杂多步任务：明确需要多个专业角色协作
+    (
+        re.compile(r"(先.+再.+|搜索.+计算|查一下.+算|调研.+然后)", re.IGNORECASE),
+        AgentType.multi_agent,
+        "命中多步骤协作关键词"
+    ),
+    # 纯计算任务：数字 + 运算符
+    (
+        re.compile(r"[\d\s]+[+\-*/^%]+[\d\s]|计算|算一下|等于多少|多少钱"),
+        AgentType.function_calling,
+        "命中纯计算关键词"
+    ),
+]
+
+
+# 3. 路由函数（你写的循环）
+def rule_route(user_input: str):
+    print(f"\n用户输入：{user_input}")
+
+    # 核心循环！你问的就是这段
+    for pattern, agent_type, description in _RULE_ROUTING_TABLE:
+        print(f"正在匹配规则：{description}")
+
+        # 正则搜索
+        if pattern.search(user_input):
+            print(f"✅ 匹配成功 → 使用：{agent_type.value}")
+            return agent_type
+
+    # 所有规则都没命中
+    print("❌ 规则全部不匹配 → 进入 LLM 自动路由")
+    return AgentType.auto
+
+
+# 4. 测试用例（你可以随便改）
 if __name__ == "__main__":
-    test_elasticsearch_memory()
+    # 测试 1：MCP
+    rule_route("帮我查一下员工信息")
+
+    # 测试 2：Multi-Agent
+    rule_route("先搜索一下价格，再算一下总和")
+
+    # 测试 3：计算器
+    rule_route("1+1等于多少")
+
+    # 测试 4：无规则命中（走LLM）
+    rule_route("你好，今天天气怎么样")
