@@ -57,8 +57,15 @@ class AgentConfig:
 
 @dataclass
 class MemoryConfig:
+    # 短期记忆：单次对话最多保留多少条消息
     short_term_max_messages: int
-    chroma_path: str
+
+    # 👇 新增：你 config.yaml 里有的字段
+    # ES 向量数据库地址
+    es_host: str
+    # BGE 向量模型路径
+    bge_model_path: str
+    # 长期记忆检索：每次召回多少条相关历史
     long_term_top_k: int
 
 
