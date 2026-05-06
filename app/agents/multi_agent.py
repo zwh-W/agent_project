@@ -2,126 +2,117 @@
 """
 企业级 Multi-Agent 架构 (主管-员工模式)
 
-★ [修改1] supervisor_node 的返回值和路由解耦
-原因：原代码 supervisor_node 返回 {"next_worker": next_step}，
-但 AgentState 没有 next_worker 字段（已在 state.py 修复），
-且原代码中 supervisor_node 节点根本没被 add_node 进去，
-路由完全靠 route_by_supervisor 函数，但这个函数重复调用了一次 LLM，
-意味着每次路由都会额外多消耗一次 LLM 调用（2倍成本，2倍延迟）。
+★ 改动：Researcher 和 Calculator 各自从 ToolRegistry 按标签取工具，
+  而不是两个 Agent 共用同一套工具。
 
-★ [修改2] 将双重 LLM 路由调用合并为单次
-★ [修改3] Supervisor Prompt 加 few-shot 示例，减少模型输出无关内容
+为什么这很重要：
+    给 Calculator Agent 绑定 web_search 工具，会让 LLM 在
+    "应该用计算器还是去搜索" 之间产生不必要的犹豫，
+    增加 token 消耗和出错概率。
+    角色职责明确，工具集也应该明确。
 """
 from typing import Literal
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode
 
 from app.core.logger import get_logger
 from app.core.llm_client import get_langchain_llm
+from app.core.prompt_manager import prompt_manager
 from app.memory.manager import memory_manager
 from app.graph.state import AgentState
-from app.tools.search import web_search
-from app.tools.calculator import calculator
+from app.tools.registry import tool_registry   # ★ 改为从注册中心获取
 
 logger = get_logger(__name__)
 
 
-# ★ [新增] Supervisor Prompt 抽离为模块级常量，方便版本管理和测试
-# 加入 few-shot 示例，强制约束输出格式，降低大模型乱输出的概率
-SUPERVISOR_SYSTEM_PROMPT = """你是一个团队主管，管理两个员工：
-- Researcher：负责联网搜索事实、新闻、实时数据
-- Calculator：负责数学计算、公式求值
-
-根据对话历史，决定下一步派给谁。任务彻底完成或不需要员工帮忙时回复 FINISH。
-
-【输出规则】只能输出以下三个词之一，不加任何标点或解释：
-Researcher
-Calculator
-FINISH
-
-【示例】
-用户问: "今天比特币价格是多少" → Researcher
-用户问: "123 乘以 456 等于多少" → Calculator
-用户问: "先查一下苹果股价，再算出它比100美元高多少" → Researcher（先搜索）
-研究员已汇报苹果股价为182美元 → Calculator（再计算）
-计算结果已给出，任务完成 → FINISH"""
-
-
 class MultiAgentSupervisor:
-    """
-    企业级 Multi-Agent 架构 (主管-员工模式)
-    """
+    """企业级 Multi-Agent 架构 (主管-员工模式)"""
 
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.memory = memory_manager.get_session(session_id)
         self.llm = get_langchain_llm()
+
+        # ★ 按标签分别获取工具子集
+        self.search_tools = tool_registry.get_tools(tags={"search"})
+        self.math_tools = tool_registry.get_tools(tags={"math"})
+
         self.app = self._build_graph()
 
     def _route_by_supervisor(self, state: AgentState) -> Literal["Researcher", "Calculator", "__end__"]:
-        """
-        ★ [修改] 将路由逻辑从两个函数（supervisor_node + route_by_supervisor）合并为一个
-        原因：原代码 supervisor_node 返回 next_worker 到状态字典，
-        但路由 edge 函数 route_by_supervisor 又单独再调用一次 LLM 做决策，
-        导致每次路由 = 2 次 LLM 调用，既浪费钱又增加延迟。
-        现在合并为一次调用，将 LLM 的决策直接用于路由。
-        """
-        logger.info(f"[{self.session_id}] 👔 主管正在审视全局进展并做路由决策...")
+        logger.info(f"[{self.session_id}] 👔 主管路由决策中...")
 
-        messages = [SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT)] + state["messages"]
-        decision = self.llm.invoke(messages).content.strip()
+        try:
+            supervisor_prompt = prompt_manager.get("supervisor")
+        except Exception:
+            supervisor_prompt = (
+                "你管理 Researcher 和 Calculator。"
+                "根据对话决定下一步。完成则输出 FINISH。只输出三词之一。"
+            )
 
-        logger.info(f"[{self.session_id}] 👔 主管原始输出: '{decision}'")
+        messages = [SystemMessage(content=supervisor_prompt)] + state["messages"]
+        decision = self.llm.invoke(messages).content.strip().lower()
 
-        # 容错：大模型可能在词里加空格或换行
-        decision_clean = decision.strip().lower()
-        if "researcher" in decision_clean:
-            next_step = "Researcher"
-        elif "calculator" in decision_clean:
-            next_step = "Calculator"
-        else:
-            next_step = "__end__"
+        logger.info(f"[{self.session_id}] 👔 主管输出: '{decision}'")
 
-        logger.info(f"[{self.session_id}] 👔 主管决定: {next_step}")
-        return next_step
+        if "researcher" in decision:
+            return "Researcher"
+        if "calculator" in decision:
+            return "Calculator"
+        return "__end__"
 
     def _build_graph(self):
-        # ──────────────────────────────────────────────
-        # 员工节点定义
-        # ──────────────────────────────────────────────
-        researcher_llm = self.llm.bind_tools([web_search])
+        # ── Researcher：只有搜索工具 ──────────────────
+        researcher_llm = self.llm.bind_tools(self.search_tools)
 
         def researcher_node(state: AgentState):
-            logger.debug(f"[{self.session_id}] 🔍 员工[研究员] 开始工作...")
-            messages = [SystemMessage(content="你是权威的研究员，遇到事实问题必须使用搜索引擎，不能凭记忆回答。")] + state["messages"]
+            logger.debug(f"[{self.session_id}] 🔍 研究员开始工作（工具: {[t.name for t in self.search_tools]}）...")
+            messages = [
+                SystemMessage(content="你是权威的研究员，遇到事实问题必须使用搜索引擎。")
+            ] + state["messages"]
             response = researcher_llm.invoke(messages)
             if response.content:
                 response.content = f"【研究员汇报】: {response.content}"
             return {"messages": [response]}
 
-        calculator_llm = self.llm.bind_tools([calculator])
+        # ── Calculator：只有数学工具 ──────────────────
+        calculator_llm = self.llm.bind_tools(self.math_tools)
 
         def calculator_node(state: AgentState):
-            logger.debug(f"[{self.session_id}] 🧮 员工[精算师] 开始工作...")
-            messages = [SystemMessage(content="你是精算师，必须使用计算工具解决数学问题，不能心算。")] + state["messages"]
+            logger.debug(f"[{self.session_id}] 🧮 精算师开始工作（工具: {[t.name for t in self.math_tools]}）...")
+            messages = [
+                SystemMessage(content="你是精算师，必须使用计算工具解决数学问题。")
+            ] + state["messages"]
             response = calculator_llm.invoke(messages)
             if response.content:
                 response.content = f"【精算师汇报】: {response.content}"
             return {"messages": [response]}
 
-        # ──────────────────────────────────────────────
-        # 组装流程图
-        # ──────────────────────────────────────────────
+        # ── 组装图 ────────────────────────────────────
         workflow = StateGraph(AgentState)
-
         workflow.add_node("Researcher", researcher_node)
         workflow.add_node("Calculator", calculator_node)
 
-        # ★ [修改] 路由函数改为 self._route_by_supervisor（实例方法），
-        # 同一个 session 的上下文（self.session_id）可以被路由函数访问，方便日志追踪
+        # ★ 工具节点也按角色分开，各自只能用自己的工具
+        workflow.add_node("ResearcherTools", ToolNode(self.search_tools))
+        workflow.add_node("CalculatorTools", ToolNode(self.math_tools))
+
+        from langgraph.prebuilt import tools_condition
+
         workflow.add_conditional_edges(START, self._route_by_supervisor)
-        workflow.add_conditional_edges("Researcher", self._route_by_supervisor)
-        workflow.add_conditional_edges("Calculator", self._route_by_supervisor)
+        workflow.add_conditional_edges(
+            "Researcher",
+            tools_condition,
+            {"tools": "ResearcherTools", "__end__": "__end__"}
+        )
+        workflow.add_conditional_edges(
+            "Calculator",
+            tools_condition,
+            {"tools": "CalculatorTools", "__end__": "__end__"}
+        )
+        workflow.add_conditional_edges("ResearcherTools", self._route_by_supervisor)
+        workflow.add_conditional_edges("CalculatorTools", self._route_by_supervisor)
 
         return workflow.compile()
 

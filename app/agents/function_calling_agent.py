@@ -27,8 +27,7 @@ from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.llm_client import get_langchain_llm
 from app.memory.manager import memory_manager
-from app.tools import ALL_TOOLS
-
+from app.tools.registry import tool_registry
 logger = get_logger(__name__)
 
 
@@ -142,12 +141,25 @@ class FunctionCallingAgent:
     具备能力：多轮动态记忆、工具自动分发、错误自我纠正、ReAct 推理链追踪
     """
 
-    def __init__(self, session_id: str):
+    def __init__(
+        self,
+        session_id: str,
+        tool_tags: Optional[set[str]] = None,
+        exclude_tags: Optional[set[str]] = None,
+    ):
         self.session_id = session_id
         self.memory = memory_manager.get_session(session_id)
         self.llm = get_langchain_llm()
-        self.llm_with_tools = self.llm.bind_tools(ALL_TOOLS)
-        self.tool_map = {tool.name: tool for tool in ALL_TOOLS}
+
+        # 从工具注册中心获取工具
+        # 如果 tool_tags 为 None，则默认获取全部已启用工具
+        self.tools = tool_registry.get_tools(
+            tags=tool_tags,
+            exclude_tags=exclude_tags,
+        )
+
+        self.llm_with_tools = self.llm.bind_tools(self.tools)
+        self.tool_map = {tool.name: tool for tool in self.tools}
 
         # 保存最近一次的推理链，供外部读取
         self.last_trace: Optional[ReActTrace] = None
