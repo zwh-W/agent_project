@@ -4,6 +4,9 @@ RAG 知识库查询工具
 
 让 Agent 调用外部 RAG 服务，查询企业制度、HR 政策、员工手册等知识库内容。
 注意：工具只负责返回证据上下文，最终答案由 Agent 基于证据生成。
+rag_search.py 把你之前的 RAG 项目封装成一个 Agent 工具，
+让 Agent 遇到企业制度 / HR 政策 / 员工手册问题时，
+通过 HTTP 调用外部 RAG 服务，拿回知识库答案摘要和 sources 证据。
 """
 
 import requests
@@ -17,6 +20,8 @@ logger = get_logger(__name__)
 
 _RAG_TIMEOUT = 15
 
+
+# _call_rag_api() 是内部辅助函数，负责真正发 HTTP 请求。
 
 def _call_rag_api(query: str, knowledge_id: int) -> dict:
     """
@@ -109,6 +114,8 @@ def _call_rag_api(query: str, knowledge_id: int) -> dict:
             "error": f"RAG 调用异常: {str(e)}"
         }
 
+
+# query_policy_knowledge_base() 是 Agent 能看到的工具入口；
 
 @tool
 def query_policy_knowledge_base(query: str, knowledge_id: Optional[int] = None) -> str:
