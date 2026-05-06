@@ -44,10 +44,8 @@ memory:
 # 工具配置
 tools:
   # 网络搜索每次返回几条结果
-  search_max_results: 3
-
-  # RAG 工具对接的知识库 API
-  rag_api_url: "http://localhost:6006"
+  search_max_results: 5
+  rag_api_url: "http://localhost:6006/chat"
   rag_knowledge_id: 1
 
 # MCP 服务器配置
