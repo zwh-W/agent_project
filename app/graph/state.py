@@ -1,22 +1,21 @@
 # app/graph/state.py
 import operator
-from typing import Annotated, TypedDict, List, Optional
+from typing import Annotated, List, Optional
 from langchain_core.messages import BaseMessage
 
 
-class AgentState(TypedDict):
+class AgentState(dict):
     """
-    LangGraph 的全局状态字典
+    LangGraph 全局状态字典
 
-    Annotated[List[BaseMessage], operator.add] 的意思是：
-    每次向 messages 更新数据时，不是"覆盖"，而是将新消息"追加(add)"到列表中。
-    这正是对话历史需要的特性。
+    messages：使用 operator.add 作为 Reducer，
+              每次节点返回时追加而非覆盖，保留完整对话历史。
 
-    ★ [修改] 新增 next_worker 字段
-    原因：multi_agent.py 的 supervisor_node 返回了 {"next_worker": ...}，
-    但原 AgentState 没有声明该字段，LangGraph 写入时会直接抛 KeyError 崩溃。
-    Optional[str] + default None 保证未赋值时不影响其他 Agent。
+    next_worker：MultiAgentSupervisor 路由信号，
+                 声明此字段避免 LangGraph 写入时 KeyError。
     """
-    messages: Annotated[List[BaseMessage], operator.add]
-    # ★ [新增字段] Multi-Agent Supervisor 的路由信号
-    next_worker: Optional[str]
+    # 用 TypedDict 风格注解（LangGraph 通过 __annotations__ 读取 Reducer）
+    __annotations__ = {
+        "messages":    Annotated[List[BaseMessage], operator.add],
+        "next_worker": Optional[str],
+    }

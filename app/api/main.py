@@ -2,9 +2,11 @@
 """
 FastAPI 服务入口
 
-★ 本版改动：
-1. 注册限流中间件 RateLimiterMiddleware
-2. 在 /health 接口里暴露工具统计和 Prompt 统计
+P0 修复版改动：
+  1. 修正中间件注册顺序和注释，确保 request_id 最外层注入。
+  2. 保持 CORS 在鉴权之前处理预检请求，避免浏览器 OPTIONS 被 API Key 拦截。
+  3. 正常业务请求执行顺序：
+       RequestContext -> CORS -> APIKey -> RateLimit -> 路由
 """
 import os
 import uuid
@@ -17,7 +19,7 @@ from app.core.logger import get_logger
 from app.api.routers import agent_router
 from app.api.middleware.auth import APIKeyMiddleware
 from app.api.middleware.request_context import RequestContextMiddleware, get_request_id
-from app.api.middleware.rate_limiter import RateLimiterMiddleware   # ★ 新增
+from app.api.middleware.rate_limiter import RateLimiterMiddleware
 
 logger = get_logger(__name__)
 
@@ -27,26 +29,35 @@ app = FastAPI(
         "支持 Function Calling / LangGraph / Multi-Agent / MCP 四种 Agent，"
         "含智能自动路由、ReAct 推理链追踪、工具注册中心、Prompt 版本管理"
     ),
-    version="2.0.0",
+    version="2.0.1",
 )
 
-# ── 中间件注册（后注册先执行）────────────────────────────
-# 执行顺序：RequestContext → RateLimit → APIKey → CORS → 路由
+# ── 中间件注册 ─────────────────────────────────────────────
+# Starlette/FastAPI 中间件通常是“后注册先执行”。
+#
+# ★ [P0 FIX] 目标执行顺序：
+#   1. RequestContext：最外层，保证所有请求/异常都带 request_id
+#   2. CORS：优先处理浏览器预检请求，避免 OPTIONS 被鉴权拦截
+#   3. APIKey：校验调用方身份
+#   4. RateLimiter：鉴权通过后再计入限流
+#   5. 路由
+#
+# 因此注册顺序要反过来写：RateLimiter -> APIKey -> CORS -> RequestContext
 
-app.add_middleware(RequestContextMiddleware)             # 4. 最先执行：注入 request_id
+app.add_middleware(RateLimiterMiddleware)
 
 enable_auth = os.getenv("ENABLE_AUTH", "true").lower() == "true"
-app.add_middleware(APIKeyMiddleware, enabled=enable_auth)  # 3. 鉴权
-
-app.add_middleware(RateLimiterMiddleware)                # 2. 限流（鉴权通过后才限流）
+app.add_middleware(APIKeyMiddleware, enabled=enable_auth)
 
 allowed_origins = getattr(settings.app, 'allowed_origins', ["*"])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
-)                                                        # 1. 最后执行
+)
+
+app.add_middleware(RequestContextMiddleware)
 
 app.include_router(agent_router.router, prefix="/v1", tags=["Agent 对话"])
 
@@ -93,21 +104,19 @@ def health_check():
 
     return {
         "status": "ok",
-        "version": "2.0.0",
+        "version": "2.0.1",
         "model": settings.llm.model,
         "llm_configured": bool(settings.llm.api_key),
         "auth_enabled": enable_auth,
         "active_sessions": memory_manager.active_session_count,
-        # ★ 工具注册情况
         "registered_tools": [s["tool_name"] for s in tool_registry.get_stats()],
-        # ★ Prompt 加载情况
         "loaded_prompts": list(prompt_manager.get_stats().keys()),
     }
 
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("启动 Agent 服务 v2.0.0...")
+    logger.info("启动 Agent 服务 v2.0.1...")
     uvicorn.run(
         "app.api.main:app",
         host=settings.app.host,
