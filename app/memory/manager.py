@@ -14,6 +14,7 @@ from app.core.logger import get_logger
 from app.core.llm_client import get_langchain_llm
 from app.core.prompt_manager import prompt_manager   # ★ 新增导入
 from app.memory.long_term import get_es_memory
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -74,6 +75,25 @@ class SessionMemory:
                 summary_section=summary_section,
                 long_term_section=long_term_section,
             )
+            now = datetime.now()
+            weekday_map = {
+                0: "星期一",
+                1: "星期二",
+                2: "星期三",
+                3: "星期四",
+                4: "星期五",
+                5: "星期六",
+                6: "星期日",
+            }
+            current_date_section = (
+                f"\n\n【当前日期】\n"
+                f"今天是 {now.strftime('%Y-%m-%d')}，{weekday_map[now.weekday()]}。\n"
+                f"当用户提到“今天、明天、后天、下周一、下个月、月底”等相对日期时，"
+                f"必须基于当前日期进行换算。\n"
+                f"如果用户的时间表达不完整或可能有歧义，必须先向用户确认，不要自行编造具体日期。"
+            )
+
+            full_system_prompt += current_date_section
         except Exception as e:
             # PromptManager 失败时降级到内联字符串，保证服务不中断
             logger.warning(f"[{self.session_id}] PromptManager 加载失败，使用内联兜底 Prompt: {e}")

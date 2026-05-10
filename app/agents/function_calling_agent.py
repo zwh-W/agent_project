@@ -21,7 +21,8 @@ import json
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import SystemMessage, ToolMessage
+from app.core.prompt_manager import prompt_manager
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -191,7 +192,16 @@ class FunctionCallingAgent:
             step = ReActStep(step_index=attempt + 1)
             step_start = time.time()
 
-            messages = self.memory.get_context(current_user_input=user_input)
+            system_prompt = prompt_manager.get(
+                "system",
+                version="v2",
+                summary_section="",
+                long_term_section="",
+            )
+
+            messages = [
+                           SystemMessage(content=system_prompt)
+                       ] + self.memory.get_context(current_user_input=user_input)
 
             logger.debug(f"[{self.session_id}] 🧠 思考中 (第 {attempt + 1}/{max_iterations} 轮)...")
             ai_msg = self.llm_with_tools.invoke(messages)

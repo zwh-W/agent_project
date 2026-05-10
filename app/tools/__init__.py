@@ -32,7 +32,7 @@ tool_registry.register(
 tool_registry.register(
     web_search,
     tags={"search", "information_retrieval"},
-    description="DuckDuckGo 实时网络搜索",
+    description="增强型实时网络搜索，支持 query rewrite、多轮 fallback 查询和结构化搜索结果返回",
 )
 
 # ── 注册：RAG 知识库查询 ★ 新增 ───────────────────────────

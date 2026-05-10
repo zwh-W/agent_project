@@ -39,21 +39,21 @@ logger = get_logger(__name__)
 
 # 支持的工单类型（LLM 参考）
 TICKET_TYPES = {
-    "leave_request":    "休假申请",
-    "reimbursement":    "报销申请",
-    "onboarding":       "入职相关",
-    "offboarding":      "离职相关",
-    "salary_inquiry":   "薪资咨询",
-    "general_hr":       "其他 HR 事务",
+    "leave_request": "休假申请",
+    "reimbursement": "报销申请",
+    "onboarding": "入职相关",
+    "offboarding": "离职相关",
+    "salary_inquiry": "薪资咨询",
+    "general_hr": "其他 HR 事务",
 }
 
 
 @tool
 def request_create_hr_ticket(
-    title: str,
-    description: str,
-    ticket_type: str = "general_hr",
-    session_id: str = "unknown",
+        title: str,
+        description: str,
+        ticket_type: str = "general_hr",
+        session_id: str = "unknown",
 ) -> str:
     """
     发起创建 HR 工单的请求（需要用户确认后才真正创建）。
@@ -65,6 +65,18 @@ def request_create_hr_ticket(
     - 用户明确表示要创建/提交/申请 HR 工单
     - 年假申请、报销申请、入职/离职办理等需要正式记录的事项
     - 任何需要 HR 部门人工处理的事务
+     重要规则：
+    - 当用户明确表示要创建、提交、申请、报销、发起 HR 工单时，必须调用本工具。
+    - 即使用户提供的信息不完整，也应先基于已有信息生成待确认工单。
+    - 缺失信息可以在 description 中写“待补充”，例如“出差日期待补充”“发票信息待补充”。
+    - 不要因为缺少出差时间、发票、工号、城市等信息而只反问用户。
+    - 创建工单时应尽量保留用户原始表达，不要擅自添加用户没有说过的事实。
+
+    示例：
+    用户说“帮我报销上次出差住宿费1200元”，即使未提供出差日期、城市、发票信息，也应调用本工具：
+    title="差旅住宿费报销"
+    description="申请报销上次出差住宿费1200元，出差日期、城市、发票信息待补充。"
+    ticket_type="reimbursement"
 
     Args:
         title:       工单标题，简明描述申请事项（20字以内）
@@ -110,7 +122,7 @@ def request_create_hr_ticket(
             session_id=session_id,
             tool_name="request_create_hr_ticket",
             tool_input={
-                "title":       title.strip(),
+                "title": title.strip(),
                 "description": description.strip(),
                 "ticket_type": ticket_type,
             },
@@ -133,15 +145,15 @@ def request_create_hr_ticket(
     )
 
     result = {
-        "need_confirmation": True,           # ★ 关键标志，agent_router.py 会检测这个字段
-        "action_id":         action["action_id"],
-        "action_type":       "create_hr_ticket",
-        "message":           confirm_message,
+        "need_confirmation": True,  # ★ 关键标志，agent_router.py 会检测这个字段
+        "action_id": action["action_id"],
+        "action_type": "create_hr_ticket",
+        "message": confirm_message,
         "pending_action": {
-            "ticket_type":   ticket_type,
+            "ticket_type": ticket_type,
             "ticket_type_cn": ticket_type_cn,
-            "title":         title.strip(),
-            "description":   description.strip(),
+            "title": title.strip(),
+            "description": description.strip(),
         },
     }
 
